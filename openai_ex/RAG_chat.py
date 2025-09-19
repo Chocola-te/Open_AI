@@ -1,8 +1,11 @@
+# pip install chromadb
+
+api_key = "API키를 입력하세요"
+
+
 from openai import OpenAI
 import chromadb
 import os
-
-api_key = "발급한 api key"
 
 # 1) OpenAI & Chroma 초기화
 client = OpenAI(api_key=api_key)
@@ -34,7 +37,7 @@ def ask(query: str) -> str:
     ).data[0].embedding
 
     results = collection.query(query_embeddings=[q_emb], n_results=3)
-    # system에는 "모델이 어떤 역할을 할지" 같은 지침, 톤, 정책
+
     # 여러 문서를 연결
     context = "\n".join(sum(results["documents"], []))
     messages = [
@@ -42,7 +45,6 @@ def ask(query: str) -> str:
         {"role": "user", "content": f"아래 문서를 참고해서 질문에 답하세요.\n\n문서:\n{context}\n\n질문: {query}"}
     ]
 
-    # 대량의 참고문서는 user나 assistant의 content에 붙이기
     resp = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,

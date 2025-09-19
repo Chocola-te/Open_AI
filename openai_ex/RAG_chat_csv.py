@@ -1,8 +1,12 @@
+# pip install chromadb
+
+api_key = "api key를 입력하세요"
+
 from openai import OpenAI
 import chromadb
 import os
-
-api_key = "발급한 api key"
+import glob
+import pandas as pd
 
 # 1) OpenAI & Chroma 초기화
 client = OpenAI(api_key=api_key)
@@ -10,20 +14,50 @@ client = OpenAI(api_key=api_key)
 chroma_client = chromadb.Client()
 collection = chroma_client.create_collection(name="company_docs")
 
-# 2) 사내 문서 등록 (예제)
-docs = [
-    "사내 복지 규정: 연차는 15일에서 시작하며, 근속 연수에 따라 증가합니다.",
-    "IT 보안 정책: 비밀번호는 12자 이상이며, 3개월마다 변경해야 합니다.",
-    "재택근무 지침: 매주 최대 2회 재택근무가 가능합니다.",
-]
+# === 2) CSV 파일 읽어서 등록 ===
+''' csv.파일 구조
+content
+사내 복지 규정: 연차는 15일에서 시작하며...
+IT 보안 정책: 비밀번호는 12자 이상...
+재택근무 지침: 매주 최대 2회 재택근무 가능...
+'''
 
-# 문서 → 임베딩 → DB에 추가
-for i, d in enumerate(docs):
-    emb = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=d
-    ).data[0].embedding
-    collection.add(ids=[f"doc_{i}"], embeddings=[emb], documents=[d])
+
+DATA_DIR = "data"   # <-- CSV 파일들이 있는 폴더
+csv_files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
+
+doc_id = 0
+for file in csv_files:
+    try:
+        df = pd.read_csv(file)
+
+        # content 라는 컬럼이 있다고 가정 (없으면 df.columns 확인 후 수정)
+        if "content" not in df.columns:
+            print(f"{file}: 'content' 컬럼을 찾을 수 없습니다.")
+            continue
+
+        for row in df["content"].dropna():
+            text = str(row).strip()
+            if not text:
+                continue
+
+            emb = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text
+            ).data[0].embedding
+
+            collection.add(
+                ids=[f"doc_{doc_id}"],
+                embeddings=[emb],
+                documents=[text]
+            )
+            doc_id += 1
+
+        print(f"[✔] {file} 등록 완료 ({len(df)}행)")
+    except Exception as e:
+        print(f"[오류] {file}: {e}")
+
+print(f"총 {doc_id}개의 문서를 Chroma에 저장했습니다.\n")
 
 # 3) 검색 + GPT 답변 함수
 def ask(query: str) -> str:
@@ -34,7 +68,7 @@ def ask(query: str) -> str:
     ).data[0].embedding
 
     results = collection.query(query_embeddings=[q_emb], n_results=3)
-    # system에는 "모델이 어떤 역할을 할지" 같은 지침, 톤, 정책
+
     # 여러 문서를 연결
     context = "\n".join(sum(results["documents"], []))
     messages = [
@@ -42,7 +76,6 @@ def ask(query: str) -> str:
         {"role": "user", "content": f"아래 문서를 참고해서 질문에 답하세요.\n\n문서:\n{context}\n\n질문: {query}"}
     ]
 
-    # 대량의 참고문서는 user나 assistant의 content에 붙이기
     resp = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
